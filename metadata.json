@@ -1,0 +1,7 @@
+{
+  "name": "Narrative Sculptor",
+  "description": "A live, conversational agentic application to transform unstructured user input into coherent, well-titled, and timestamped narrative entries.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
