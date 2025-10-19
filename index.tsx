@@ -112,6 +112,26 @@ class LLMManager {
     }
 }
 
+// --- UTILITY FUNCTIONS ---
+
+/**
+ * Creates a debounced function that delays invoking `func` until after `waitFor`
+ * milliseconds have elapsed since the last time the debounced function was invoked.
+ */
+function debounce<F extends (...args: any[]) => any>(func: F, waitFor: number) {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+
+  const debounced = (...args: Parameters<F>): void => {
+    if (timeout !== null) {
+      clearTimeout(timeout);
+      timeout = null;
+    }
+    timeout = setTimeout(() => func(...args), waitFor);
+  };
+
+  return debounced;
+}
+
 
 // --- CONFIGURATION ---
 const MODEL_NAME = 'gemini-2.5-flash';
@@ -610,6 +630,10 @@ chatHistoryEl.addEventListener('click', async (event) => {
         window.open(url, '_blank');
     }
 });
+
+journalContextEl.addEventListener('input', debounce(() => {
+    localStorage.setItem(JOURNAL_CONTEXT_KEY, journalContextEl.value);
+}, 500));
 
 
 // --- INITIAL SETUP ---
