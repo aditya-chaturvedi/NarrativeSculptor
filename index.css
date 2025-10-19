@@ -238,6 +238,7 @@ main {
     border: 1px solid var(--border-color);
     padding: 15px;
     border-radius: 8px;
+    margin-top: 10px;
 }
 .archived-entry h3 {
     font-size: 1.2rem;
@@ -364,6 +365,32 @@ main {
 
 .hidden {
   display: none !important;
+}
+
+.export-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid var(--border-color);
+}
+
+.export-actions button {
+    flex-grow: 1;
+    padding: 10px 15px;
+    border-radius: 8px;
+    border: 1px solid var(--primary-color);
+    background-color: transparent;
+    color: var(--primary-color);
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.export-actions button:hover {
+    background-color: var(--primary-variant-color);
+    color: var(--on-surface-color);
+    border-color: var(--primary-variant-color);
 }
 
 /* Custom Scrollbar */

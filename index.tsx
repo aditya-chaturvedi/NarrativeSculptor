@@ -144,7 +144,7 @@ function addMessage(role: 'user' | 'agent', content: string, speakableText?: str
   chatHistory.push({ role, content: parsedContent });
   
   if (role === 'agent') {
-    speak(speakableText || stripHtml(parsedContent));
+    speak(speakableText || stripHtml(parsedContent as string));
   }
   
   updateUI();
@@ -194,9 +194,7 @@ async function runConversation() {
       addMessage('agent', response);
     }
   } catch (error) {
-    console.error("Error during conversation:", error);
-    addMessage('agent', "Sorry, I encountered an error. Please try again.", "Sorry, I encountered an error.");
-    currentState = AppState.INTAKE;
+    handleApiError(error, 'conversation');
   }
   
   updateUI();
@@ -238,9 +236,7 @@ async function triggerDrafting() {
         addMessage('agent', confirmationMessage, speakableText);
 
     } catch (error) {
-        console.error("Error during drafting:", error);
-        addMessage('agent', "Sorry, I failed to generate the draft. Let's start over.", "Draft generation failed. Starting over.");
-        resetState();
+        handleApiError(error, 'drafting');
     }
     updateUI();
 }
@@ -257,7 +253,14 @@ function handleConfirmation(approved: boolean) {
             hour12: false
         }).replace(',', '');
         
-        const formattedEntry = `
+        const sourcesText = finalDraft.sources && finalDraft.sources.length > 0 
+            ? `\n\n### Sources\n${finalDraft.sources.map(s => `- [${s.title}](${s.uri})`).join('\n')}` 
+            : '';
+            
+        const markdownToExport = `# ${finalDraft.title}\n\n*Logged: ${timestamp}*\n\n${finalDraft.narrative}${sourcesText}`;
+        const sanitizedMarkdown = markdownToExport.replace(/"/g, '&quot;');
+        
+        const formattedEntryHTML = `
             <div class="archived-entry">
                 <h3>${finalDraft.title}</h3>
                 <p class="timestamp">--- Logged: ${timestamp} ---</p>
@@ -273,7 +276,18 @@ function handleConfirmation(approved: boolean) {
             </div>
         `;
         
-        addMessage('agent', `<p>Excellent! The following entry has been formatted and archived to your 'IdeasJournal'.</p>${formattedEntry}<p>You can start a new thought below.</p>`, 'Excellent! The entry has been archived. You can start a new thought.');
+        const exportActionsHTML = `
+            <div class="export-actions">
+                <button data-action="copy" data-content="${sanitizedMarkdown}">Copy to Clipboard</button>
+                <button data-action="download" data-content="${sanitizedMarkdown}" data-title="${finalDraft.title.replace(/"/g, '&quot;')}">Download as Markdown</button>
+            </div>
+        `;
+        
+        addMessage(
+            'agent', 
+            `<p>Excellent! Your entry is ready. You can now copy it or download it to add to your Google Doc.</p>${formattedEntryHTML}${exportActionsHTML}<p>You can start a new thought below.</p>`, 
+            'Excellent! The entry has been archived. You can start a new thought.'
+        );
         
         // Simulate updating context
         const newEntryText = `Title: ${finalDraft.title}\nTimestamp: ${timestamp}\nNarrative: ${finalDraft.narrative.substring(0, 150)}...\n---\n\n`;
@@ -286,6 +300,50 @@ function handleConfirmation(approved: boolean) {
     }
     updateUI();
 }
+
+/**
+ * Handles API errors, displaying a user-friendly message and managing state.
+ * @param error The error object caught.
+ * @param context The context in which the error occurred ('conversation' or 'drafting').
+ */
+function handleApiError(error: any, context: 'conversation' | 'drafting') {
+    console.error(`Error during ${context}:`, error);
+
+    let userMessage = `Sorry, I encountered a technical issue while trying to ${context === 'conversation' ? 'process your thought' : 'draft the narrative'}.`;
+    let speakableMessage = "Sorry, I encountered a technical issue.";
+
+    // Attempt to parse a more specific error message from the Gemini API error structure.
+    if (error && error.message) {
+        if (error.message.includes('API key not valid')) {
+            userMessage = "There seems to be an issue with the API configuration. The provided API key is invalid. Please contact the administrator to resolve this.";
+            speakableMessage = "There is an API configuration error.";
+        } else if (error.message.toLowerCase().includes('rate limit')) {
+            userMessage = "The service is currently experiencing high traffic and your request could not be completed. Please wait a moment and try again.";
+            speakableMessage = "The service is busy. Please try again later.";
+        } else if (error.message.toLowerCase().includes('timed out')) {
+            userMessage = "The request timed out. This might be a temporary network issue. Please try sending your message again.";
+            speakableMessage = "The request timed out. Please try again.";
+        } else {
+             // For other known errors, provide a general but helpful message.
+             userMessage += " Please try your request again. If the problem continues, resetting the session might help.";
+        }
+    } else {
+        // For unknown errors.
+        userMessage += " Please try again. If the issue persists, consider resetting the session.";
+    }
+
+    addMessage('agent', userMessage, speakableMessage);
+
+    // Revert state to allow the user to continue or retry.
+    if (context === 'drafting') {
+        // If drafting fails, it's best to return to the refining state
+        // to allow for corrections or another attempt.
+        currentState = AppState.REFINING;
+    }
+    // For 'conversation' errors, the state is already 'REFINING' and the UI will be
+    // re-enabled by the updateUI() call in the calling function, so no state change is needed.
+}
+
 
 // --- GEMINI API CALLER ---
 // Fix: Refactored to use the modern `ai.models.generateContent` API, replacing the deprecated `ai.getGenerativeModel`.
@@ -308,7 +366,8 @@ async function callGemini(prompt: string, useSearch: boolean, useJson = false) {
     config: config,
   });
 
-  const text = response.text;
+  // Fix: Await `Promise.resolve(response.text)` to handle cases where `response.text` might be a Promise-like object, ensuring `text` is always a string.
+  const text = await Promise.resolve(response.text);
 
   if (useJson) {
       return JSON.parse(text);
@@ -376,6 +435,44 @@ chatInputEl.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         chatFormEl.requestSubmit();
+    }
+});
+
+chatHistoryEl.addEventListener('click', async (event) => {
+    const target = event.target as HTMLElement;
+    const button = target.closest('button[data-action]');
+
+    if (!button) return;
+
+    const action = button.getAttribute('data-action');
+    const content = button.getAttribute('data-content');
+
+    if (action === 'copy') {
+        try {
+            await navigator.clipboard.writeText(content);
+            button.textContent = 'Copied!';
+            setTimeout(() => { button.textContent = 'Copy to Clipboard'; }, 2000);
+        } catch (err) {
+            console.error('Failed to copy text: ', err);
+            button.textContent = 'Copy Failed';
+            setTimeout(() => { button.textContent = 'Copy to Clipboard'; }, 2000);
+        }
+    }
+
+    if (action === 'download') {
+        const title = button.getAttribute('data-title');
+        const filename = `${title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.md`;
+        const blob = new Blob([content], { type: 'text/markdown;charset=utf-8;' });
+        const link = document.createElement('a');
+        if (link.href) {
+            URL.revokeObjectURL(link.href);
+        }
+        link.href = URL.createObjectURL(blob);
+        link.download = filename;
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
     }
 });
 
