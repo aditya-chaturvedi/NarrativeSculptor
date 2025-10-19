@@ -116,6 +116,7 @@ class LLMManager {
 // --- CONFIGURATION ---
 const API_KEY = process.env.API_KEY;
 const MODEL_NAME = 'gemini-2.5-flash';
+const JOURNAL_CONTEXT_KEY = 'narrativeSculptorJournalContext';
 
 // --- DOM ELEMENTS ---
 const journalContextEl = document.getElementById('journal-context') as HTMLTextAreaElement;
@@ -275,7 +276,9 @@ function resetState() {
     chatHistory = [];
     rawThought = '';
     finalDraft = null;
-    journalContextEl.value = getInitialJournalContext();
+    const defaultContext = getHardcodedDefaultContext();
+    journalContextEl.value = defaultContext;
+    localStorage.setItem(JOURNAL_CONTEXT_KEY, defaultContext);
     if(recognition && isRecording) recognition.stop();
     window.speechSynthesis.cancel();
     addMessage('agent', "Session reset. Please enter a new thought to begin.", "Session reset.");
@@ -344,7 +347,10 @@ async function triggerDrafting() {
         - Journal Context: ${journalContextEl.value}
         - Conversation History: ${JSON.stringify(chatHistory.map(m => ({role: m.role, content: stripHtml(m.content)})))}
         
-        Generate a JSON object with the final title, narrative, and sources. The narrative must include citation markers like [1] corresponding to the sources.`;
+        Generate a JSON object with three keys: "title", "narrative", and "sources".
+        - The "title" should be a concise and compelling heading that captures the main theme of the narrative entry.
+        - The "narrative" is the final, well-structured journal entry. It must include citation markers like [1] corresponding to the sources array if any facts were grounded.
+        - The "sources" is an array of objects, each with a "title" and "uri", if you used any external sources.`;
 
         const provider = llmManager.getCurrentProvider();
         const response = await provider.generateContent(draftingPrompt, false, true);
@@ -434,6 +440,7 @@ function handleConfirmation(approved: boolean) {
         // Simulate updating context
         const newEntryText = `Title: ${finalDraft.title}\nTimestamp: ${timestamp}\nNarrative: ${finalDraft.narrative.substring(0, 150)}...\n---\n\n`;
         journalContextEl.value = newEntryText + journalContextEl.value;
+        localStorage.setItem(JOURNAL_CONTEXT_KEY, journalContextEl.value);
 
         currentState = AppState.INTAKE;
     } else {
@@ -576,7 +583,7 @@ chatHistoryEl.addEventListener('click', async (event) => {
 
 
 // --- INITIAL SETUP ---
-function getInitialJournalContext() {
+function getHardcodedDefaultContext() {
     return `Title: The Impact of Remote Work on Urban Planning
 Timestamp: 2023-10-26 10:00:00 UTC
 Narrative: The shift to remote work, accelerated by the pandemic, is forcing cities to rethink their commercial districts. Empty office buildings could be converted into residential units to address housing shortages...
@@ -586,6 +593,16 @@ Narrative: The shift to remote work, accelerated by the pandemic, is forcing cit
 Title: AI in Creative Writing
 Timestamp: 2023-10-25 15:30:00 UTC
 Narrative: Exploring the use of AI as a brainstorming partner rather than an author. Tools can suggest plot points or character traits, but the core emotional narrative still requires a human touch.`;
+}
+
+function getInitialJournalContext() {
+    const storedContext = localStorage.getItem(JOURNAL_CONTEXT_KEY);
+    if (storedContext) {
+        return storedContext;
+    }
+    const defaultContext = getHardcodedDefaultContext();
+    localStorage.setItem(JOURNAL_CONTEXT_KEY, defaultContext);
+    return defaultContext;
 }
 
 journalContextEl.value = getInitialJournalContext();
