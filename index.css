@@ -233,6 +233,33 @@ main {
     overflow-x: auto;
 }
 
+.message .citations {
+    margin-top: 15px;
+    border-top: 1px solid var(--border-color);
+    padding-top: 10px;
+    font-size: 0.8rem;
+}
+.message .citations h4 {
+    margin-bottom: 5px;
+    color: var(--secondary-color);
+}
+.message .citations ul {
+    list-style-type: none;
+    padding-left: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+.message .citations a {
+    color: var(--primary-color);
+    text-decoration: none;
+}
+.message .citations a:hover {
+    text-decoration: underline;
+}
+
+
 .archived-entry {
     background-color: #2c2c2c;
     border: 1px solid var(--border-color);

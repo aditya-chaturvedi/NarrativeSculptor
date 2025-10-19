@@ -3,9 +3,115 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-// Fix: Removed unused 'Type' import.
 import { GoogleGenAI } from '@google/genai';
 import { marked } from 'marked';
+
+// --- LLM Abstraction Layer ---
+
+/**
+ * The response structure from any LLM provider.
+ */
+interface ProviderResponse {
+  text?: string;
+  json?: any;
+  sources?: { title: string; uri: string }[];
+}
+
+/**
+ * Interface for a multimodal LLM provider.
+ */
+interface LLMProvider {
+  generateContent(prompt: string, useSearch: boolean, useJson: boolean): Promise<ProviderResponse>;
+}
+
+/**
+ * An implementation of LLMProvider for the Google Gemini API.
+ */
+class GeminiProvider implements LLMProvider {
+  private ai: GoogleGenAI;
+  private modelName: string;
+  private systemInstruction: string;
+
+  constructor(apiKey: string, modelName: string, systemInstruction: string) {
+    if (!apiKey) {
+      throw new Error("API key is missing. Please ensure it's configured correctly.");
+    }
+    this.ai = new GoogleGenAI({ apiKey });
+    this.modelName = modelName;
+    this.systemInstruction = systemInstruction;
+  }
+
+  async generateContent(prompt: string, useSearch: boolean, useJson: boolean): Promise<ProviderResponse> {
+    const config: any = {
+      systemInstruction: this.systemInstruction,
+    };
+
+    if (useSearch) {
+      config.tools = [{ googleSearch: {} }];
+    }
+    if (useJson) {
+      config.responseMimeType = 'application/json';
+    }
+
+    const response = await this.ai.models.generateContent({
+      model: this.modelName,
+      contents: prompt,
+      config: config,
+    });
+    
+    const text = await Promise.resolve(response.text);
+
+    const providerResponse: ProviderResponse = {};
+
+    if (useJson) {
+      providerResponse.json = JSON.parse(text);
+    } else {
+      providerResponse.text = text;
+    }
+    
+    const groundingMetadata = response.candidates?.[0]?.groundingMetadata;
+    if (useSearch && groundingMetadata?.groundingChunks) {
+      const sources = groundingMetadata.groundingChunks
+        .map(chunk => ({ title: chunk.web.title, uri: chunk.web.uri }));
+      
+      providerResponse.sources = sources;
+    }
+
+    return providerResponse;
+  }
+}
+
+/**
+ * Manages the available LLM providers and the currently active one.
+ */
+class LLMManager {
+    private providers: Map<string, LLMProvider> = new Map();
+    private currentProviderName: string;
+
+    registerProvider(name: string, provider: LLMProvider) {
+        this.providers.set(name, provider);
+        if (!this.currentProviderName) {
+            this.currentProviderName = name;
+        }
+    }
+
+    // In a real app, this would be connected to a UI selector.
+    setCurrentProvider(name: string) {
+        if (!this.providers.has(name)) {
+            throw new Error(`Provider "${name}" is not registered.`);
+        }
+        this.currentProviderName = name;
+        console.log(`Switched to LLM provider: ${name}`);
+    }
+
+    getCurrentProvider(): LLMProvider {
+        if (!this.currentProviderName || !this.providers.has(this.currentProviderName)) {
+            throw new Error("No active LLM provider is set or registered.");
+        }
+        return this.providers.get(this.currentProviderName)!;
+    }
+}
+
 
 // --- CONFIGURATION ---
 const API_KEY = process.env.API_KEY;
@@ -44,7 +150,6 @@ let isAudioOutputEnabled = false;
 let isRecording = false;
 
 // --- SPEECH & AUDIO ---
-// Fix: Cast window to `any` to resolve TypeScript errors for non-standard SpeechRecognition APIs.
 const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 let recognition;
 if (SpeechRecognition) {
@@ -81,8 +186,6 @@ if (SpeechRecognition) {
 
 
 // --- INITIALIZATION ---
-const ai = new GoogleGenAI({ apiKey: API_KEY });
-
 const SYSTEM_INSTRUCTION = `You are Narrative Sculptor, a supportive, Socratic, and fact-checking agent. Your goal is to help the user refine their unstructured thoughts into a single, cohesive, and factually-backed narrative entry for their journal.
 
 **Your Persona & Rules:**
@@ -91,6 +194,23 @@ const SYSTEM_INSTRUCTION = `You are Narrative Sculptor, a supportive, Socratic, 
 3.  **Fact-Grounding:** For any claims requiring external validation, you MUST use the provided Google Search tool. Only use information from the search results. Do not invent facts. If a claim cannot be verified, flag it as speculative.
 4.  **Questioning:** Only ask one, specific clarifying question at a time. Your questions should aim to define the core topic/thesis, identify the intended audience or purpose, fill logical gaps, or determine the desired tone or structure.
 5.  **State Transitions:** During the 'Refining' phase, after you've gathered enough information, you must respond with the exact string "DRAFTING_READY" and nothing else. This will trigger the next step. Do not say this until you are confident you can produce a high-quality draft.`;
+
+// Setup the LLM Manager and Providers
+const llmManager = new LLMManager();
+try {
+    const geminiProvider = new GeminiProvider(API_KEY, MODEL_NAME, SYSTEM_INSTRUCTION);
+    llmManager.registerProvider('gemini', geminiProvider);
+
+    // To add another provider, you would implement the LLMProvider interface and register it here.
+    // Example:
+    // class OtherProvider implements LLMProvider { /* ... */ }
+    // const otherProvider = new OtherProvider(OTHER_API_KEY);
+    // llmManager.registerProvider('other', otherProvider);
+    // llmManager.setCurrentProvider('other'); // To switch to it
+} catch (error) {
+    console.error("Failed to initialize LLM provider:", error);
+    addMessage('agent', "Error: Could not initialize the AI service. Please check the API key and configuration.", "Error: Could not initialize the AI service.");
+}
 
 
 // --- UI UPDATE FUNCTIONS ---
@@ -186,12 +306,25 @@ async function runConversation() {
     const prompt = buildPrompt();
     const useSearch = currentState === AppState.REFINING;
 
-    const response = await callGemini(prompt, useSearch);
+    const provider = llmManager.getCurrentProvider();
+    const response = await provider.generateContent(prompt, useSearch, false);
 
-    if (response.trim() === 'DRAFTING_READY') {
+    if (response.text.trim() === 'DRAFTING_READY') {
       await triggerDrafting();
     } else {
-      addMessage('agent', response);
+      let agentContent = response.text;
+      if (response.sources && response.sources.length > 0) {
+        const sourcesHtml = `
+            <div class="citations">
+                <h4>Sources:</h4>
+                <ul>
+                    ${response.sources.map(s => `<li><a href="${s.uri}" target="_blank">${s.title}</a></li>`).join('')}
+                </ul>
+            </div>
+        `;
+        agentContent += sourcesHtml;
+      }
+      addMessage('agent', agentContent);
     }
   } catch (error) {
     handleApiError(error, 'conversation');
@@ -213,8 +346,17 @@ async function triggerDrafting() {
         
         Generate a JSON object with the final title, narrative, and sources. The narrative must include citation markers like [1] corresponding to the sources.`;
 
-        const resultJson = await callGemini(draftingPrompt, false, true);
-        finalDraft = resultJson;
+        const provider = llmManager.getCurrentProvider();
+        const response = await provider.generateContent(draftingPrompt, false, true);
+        
+        finalDraft = response.json;
+
+        // If the provider also returned sources (e.g. from a tool call within a JSON response),
+        // let's prefer those as they are more reliable than what the model might generate in the JSON.
+        if (response.sources && response.sources.length > 0) {
+            finalDraft.sources = response.sources;
+        }
+        
         currentState = AppState.CONFIRMING;
         
         const confirmationMessage = `
@@ -343,50 +485,6 @@ function handleApiError(error: any, context: 'conversation' | 'drafting') {
     // For 'conversation' errors, the state is already 'REFINING' and the UI will be
     // re-enabled by the updateUI() call in the calling function, so no state change is needed.
 }
-
-
-// --- GEMINI API CALLER ---
-// Fix: Refactored to use the modern `ai.models.generateContent` API, replacing the deprecated `ai.getGenerativeModel`.
-// This consolidates model configuration into a single, compliant API call.
-async function callGemini(prompt: string, useSearch: boolean, useJson = false) {
-  const config: any = {
-    systemInstruction: SYSTEM_INSTRUCTION,
-  };
-
-  if (useSearch) {
-    config.tools = [{ googleSearch: {} }];
-  }
-  if (useJson) {
-    config.responseMimeType = 'application/json';
-  }
-
-  const response = await ai.models.generateContent({
-    model: MODEL_NAME,
-    contents: prompt,
-    config: config,
-  });
-
-  // Fix: Await `Promise.resolve(response.text)` to handle cases where `response.text` might be a Promise-like object, ensuring `text` is always a string.
-  const text = await Promise.resolve(response.text);
-
-  if (useJson) {
-      return JSON.parse(text);
-  }
-
-  // If search was used, let's append the sources to the text for context
-  const groundingMetadata = response.candidates?.[0]?.groundingMetadata;
-  if (useSearch && groundingMetadata?.groundingChunks) {
-    const citations = groundingMetadata.groundingChunks
-        .map((chunk, i) => `[${i+1}] ${chunk.web.title}: ${chunk.web.uri}`)
-        .join('\n');
-    if (citations) {
-        return `${text}\n\n*Referenced sources for validation.*\n`;
-    }
-  }
-
-  return text;
-}
-
 
 function buildPrompt(): string {
   const historyText = chatHistory.map(m => `${m.role}: ${stripHtml(m.content)}`).join('\n');
