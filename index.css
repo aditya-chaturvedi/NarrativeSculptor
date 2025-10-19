@@ -15,6 +15,7 @@
   --button-text: #000000;
   --button-hover-bg: #a764fa;
   --danger-color: #cf6679;
+  --gdoc-color: #4285F4;
 }
 
 * {
@@ -35,7 +36,7 @@ body {
   padding: 10px;
 }
 
-.container {
+#main-container {
   width: 100%;
   max-width: 900px;
   height: 95vh;
@@ -47,6 +48,7 @@ body {
   overflow: hidden;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
   border: 1px solid var(--border-color);
+  transition: filter 0.3s ease;
 }
 
 header {
@@ -420,6 +422,18 @@ main {
     border-color: var(--primary-variant-color);
 }
 
+.export-actions button[data-action="save-gdoc"] {
+    border-color: var(--gdoc-color);
+    color: var(--gdoc-color);
+}
+
+.export-actions button[data-action="save-gdoc"]:hover {
+    background-color: var(--gdoc-color);
+    border-color: var(--gdoc-color);
+    color: var(--on-surface-color);
+}
+
+
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
@@ -435,12 +449,83 @@ main {
   background: #555;
 }
 
+/* API Key Gate */
+.api-key-gate {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    backdrop-filter: blur(5px);
+}
+
+.gate-modal {
+    background-color: var(--surface-color);
+    padding: 30px 40px;
+    border-radius: 12px;
+    text-align: center;
+    box-shadow: 0 5px 20px rgba(0,0,0,0.4);
+    border: 1px solid var(--border-color);
+    max-width: 400px;
+}
+
+.gate-modal h2 {
+    color: var(--on-surface-color);
+    margin-bottom: 15px;
+}
+
+.gate-modal p {
+    margin-bottom: 25px;
+    color: var(--on-background-color);
+}
+
+.gate-modal button {
+    width: 100%;
+    padding: 12px 20px;
+    border: none;
+    border-radius: 8px;
+    background-color: var(--button-bg);
+    color: var(--button-text);
+    font-size: 1rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.gate-modal button:hover {
+    background-color: var(--button-hover-bg);
+}
+
+.gate-modal button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.error-message {
+    margin-top: 15px;
+    color: var(--danger-color);
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+#main-container.blurred {
+    filter: blur(8px);
+    pointer-events: none;
+    user-select: none;
+}
+
+
 /* --- MOBILE RESPONSIVENESS --- */
 @media (max-width: 768px) {
   body {
     padding: 0;
   }
-  .container {
+  #main-container {
     height: 100vh;
     max-height: none;
     border-radius: 0;

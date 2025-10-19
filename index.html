@@ -10,7 +10,16 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
 </head>
 <body>
-  <div class="container">
+  <div id="api-key-gate" class="api-key-gate">
+    <div class="gate-modal">
+        <h2>Connection Required</h2>
+        <p>To begin, please initialize the connection to the Google AI service.</p>
+        <button id="initialize-button">Initialize Connection</button>
+        <div id="api-key-error" class="error-message hidden"></div>
+    </div>
+  </div>
+
+  <div id="main-container" class="container">
     <header>
       <h1>Narrative Sculptor</h1>
       <p>Your agent for transforming thoughts into fact-grounded narratives.</p>
@@ -30,11 +39,7 @@
               <button id="reset-button">Reset Session</button>
             </div>
         </div>
-        <div id="chat-history">
-            <div class="message agent">
-                <p>Welcome to Narrative Sculptor. Please enter an initial thought or idea below to begin the refinement process.</p>
-            </div>
-        </div>
+        <div id="chat-history"></div>
         <div id="loading-indicator" class="hidden">
           <div class="spinner"></div>
           <span>Agent is thinking...</span>

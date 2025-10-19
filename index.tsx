@@ -114,7 +114,6 @@ class LLMManager {
 
 
 // --- CONFIGURATION ---
-const API_KEY = process.env.API_KEY;
 const MODEL_NAME = 'gemini-2.5-flash';
 const JOURNAL_CONTEXT_KEY = 'narrativeSculptorJournalContext';
 
@@ -132,6 +131,10 @@ const confirmYesButtonEl = document.getElementById('confirm-yes');
 const confirmNoButtonEl = document.getElementById('confirm-no');
 const voiceInputButtonEl = document.getElementById('voice-input-button');
 const audioOutputButtonEl = document.getElementById('audio-output-button');
+const apiKeyGateEl = document.getElementById('api-key-gate');
+const initializeButtonEl = document.getElementById('initialize-button') as HTMLButtonElement;
+const mainContainerEl = document.getElementById('main-container');
+const apiKeyErrorEl = document.getElementById('api-key-error');
 
 
 // --- STATE MANAGEMENT ---
@@ -149,6 +152,7 @@ let rawThought = '';
 let finalDraft = null;
 let isAudioOutputEnabled = false;
 let isRecording = false;
+let isInitialized = false;
 
 // --- SPEECH & AUDIO ---
 const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -196,21 +200,36 @@ const SYSTEM_INSTRUCTION = `You are Narrative Sculptor, a supportive, Socratic, 
 4.  **Questioning:** Only ask one, specific clarifying question at a time. Your questions should aim to define the core topic/thesis, identify the intended audience or purpose, fill logical gaps, or determine the desired tone or structure.
 5.  **State Transitions:** During the 'Refining' phase, after you've gathered enough information, you must respond with the exact string "DRAFTING_READY" and nothing else. This will trigger the next step. Do not say this until you are confident you can produce a high-quality draft.`;
 
-// Setup the LLM Manager and Providers
+// Setup the LLM Manager
 const llmManager = new LLMManager();
-try {
-    const geminiProvider = new GeminiProvider(API_KEY, MODEL_NAME, SYSTEM_INSTRUCTION);
-    llmManager.registerProvider('gemini', geminiProvider);
 
-    // To add another provider, you would implement the LLMProvider interface and register it here.
-    // Example:
-    // class OtherProvider implements LLMProvider { /* ... */ }
-    // const otherProvider = new OtherProvider(OTHER_API_KEY);
-    // llmManager.registerProvider('other', otherProvider);
-    // llmManager.setCurrentProvider('other'); // To switch to it
-} catch (error) {
-    console.error("Failed to initialize LLM provider:", error);
-    addMessage('agent', "Error: Could not initialize the AI service. Please check the API key and configuration.", "Error: Could not initialize the AI service.");
+async function initializeAndConnect() {
+    initializeButtonEl.disabled = true;
+    initializeButtonEl.textContent = 'Connecting...';
+    apiKeyErrorEl.classList.add('hidden');
+
+    try {
+        const apiKey = process.env.API_KEY;
+        // The GeminiProvider constructor will throw an error if the key is missing.
+        const geminiProvider = new GeminiProvider(apiKey, MODEL_NAME, SYSTEM_INSTRUCTION);
+        llmManager.registerProvider('gemini', geminiProvider);
+
+        isInitialized = true;
+        apiKeyGateEl.classList.add('hidden');
+        mainContainerEl.classList.remove('blurred');
+        
+        // Clear chat and add welcome message only on successful initialization
+        chatHistory = [];
+        addMessage('agent', 'Welcome to Narrative Sculptor. Please enter an initial thought or idea below to begin the refinement process.', 'Welcome to Narrative Sculptor.');
+        updateUI();
+
+    } catch (error) {
+        console.error("Failed to initialize LLM provider:", error);
+        apiKeyErrorEl.textContent = `Initialization Failed: ${error.message}`;
+        apiKeyErrorEl.classList.remove('hidden');
+        initializeButtonEl.disabled = false;
+        initializeButtonEl.textContent = 'Initialize Connection';
+    }
 }
 
 
@@ -224,13 +243,13 @@ function updateUI() {
   `).join('');
   chatHistoryEl.scrollTop = chatHistoryEl.scrollHeight;
 
-  const isAgentTurn = currentState === AppState.DRAFTING || currentState === AppState.ARCHIVING;
+  const isAgentTurn = currentState === AppState.DRAFTING || currentState === AppState.ARCHIVING || !isInitialized;
   chatInputEl.disabled = isAgentTurn;
   sendButton.disabled = isAgentTurn;
   voiceInputButtonEl.classList.toggle('active', isRecording);
   audioOutputButtonEl.classList.toggle('active', isAudioOutputEnabled);
 
-  if (isAgentTurn) {
+  if (isAgentTurn && isInitialized) { // Show loading only if initialized
     loadingIndicatorEl.classList.remove('hidden');
     chatFormEl.classList.add('hidden');
     confirmationButtonsEl.classList.add('hidden');
@@ -288,6 +307,8 @@ function resetState() {
 // --- CORE LOGIC ---
 async function handleUserInput(event: Event) {
   event.preventDefault();
+  if (!isInitialized) return;
+
   const userInput = chatInputEl.value.trim();
   if (!userInput) return;
 
@@ -428,13 +449,14 @@ function handleConfirmation(approved: boolean) {
             <div class="export-actions">
                 <button data-action="copy" data-content="${sanitizedMarkdown}">Copy to Clipboard</button>
                 <button data-action="download" data-content="${sanitizedMarkdown}" data-title="${finalDraft.title.replace(/"/g, '&quot;')}">Download as Markdown</button>
+                <button data-action="save-gdoc" data-content="${sanitizedMarkdown}" data-title="${finalDraft.title.replace(/"/g, '&quot;')}">Save to Google Doc</button>
             </div>
         `;
         
         addMessage(
             'agent', 
-            `<p>Excellent! Your entry is ready. You can now copy it or download it to add to your Google Doc.</p>${formattedEntryHTML}${exportActionsHTML}<p>You can start a new thought below.</p>`, 
-            'Excellent! The entry has been archived. You can start a new thought.'
+            `<p>Excellent! Your entry is ready. You can now save it or start a new thought below.</p>${formattedEntryHTML}${exportActionsHTML}`, 
+            'Excellent! The entry has been archived. You can now save it or start a new thought.'
         );
         
         // Simulate updating context
@@ -461,11 +483,20 @@ function handleApiError(error: any, context: 'conversation' | 'drafting') {
     let userMessage = `Sorry, I encountered a technical issue while trying to ${context === 'conversation' ? 'process your thought' : 'draft the narrative'}.`;
     let speakableMessage = "Sorry, I encountered a technical issue.";
 
-    // Attempt to parse a more specific error message from the Gemini API error structure.
-    if (error && error.message) {
+    if (error?.message) {
         if (error.message.includes('API key not valid')) {
-            userMessage = "There seems to be an issue with the API configuration. The provided API key is invalid. Please contact the administrator to resolve this.";
-            speakableMessage = "There is an API configuration error.";
+            userMessage = "There's an issue with the API connection. The key may be invalid or expired. Please re-initialize the connection.";
+            speakableMessage = "There is an API connection error.";
+            
+            // Reset state and show gate
+            isInitialized = false;
+            apiKeyGateEl.classList.remove('hidden');
+            mainContainerEl.classList.add('blurred');
+            apiKeyErrorEl.textContent = 'Connection Error: The API key is not valid. Please re-initialize.';
+            apiKeyErrorEl.classList.remove('hidden');
+            initializeButtonEl.disabled = false;
+            initializeButtonEl.textContent = 'Re-Initialize Connection';
+            
         } else if (error.message.toLowerCase().includes('rate limit')) {
             userMessage = "The service is currently experiencing high traffic and your request could not be completed. Please wait a moment and try again.";
             speakableMessage = "The service is busy. Please try again later.";
@@ -473,24 +504,17 @@ function handleApiError(error: any, context: 'conversation' | 'drafting') {
             userMessage = "The request timed out. This might be a temporary network issue. Please try sending your message again.";
             speakableMessage = "The request timed out. Please try again.";
         } else {
-             // For other known errors, provide a general but helpful message.
              userMessage += " Please try your request again. If the problem continues, resetting the session might help.";
         }
     } else {
-        // For unknown errors.
         userMessage += " Please try again. If the issue persists, consider resetting the session.";
     }
 
     addMessage('agent', userMessage, speakableMessage);
 
-    // Revert state to allow the user to continue or retry.
     if (context === 'drafting') {
-        // If drafting fails, it's best to return to the refining state
-        // to allow for corrections or another attempt.
         currentState = AppState.REFINING;
     }
-    // For 'conversation' errors, the state is already 'REFINING' and the UI will be
-    // re-enabled by the updateUI() call in the calling function, so no state change is needed.
 }
 
 function buildPrompt(): string {
@@ -517,6 +541,7 @@ chatFormEl.addEventListener('submit', handleUserInput);
 resetButtonEl.addEventListener('click', resetState);
 confirmYesButtonEl.addEventListener('click', () => handleConfirmation(true));
 confirmNoButtonEl.addEventListener('click', () => handleConfirmation(false));
+initializeButtonEl.addEventListener('click', initializeAndConnect);
 
 voiceInputButtonEl.addEventListener('click', () => {
     if (isRecording) {
@@ -551,6 +576,7 @@ chatHistoryEl.addEventListener('click', async (event) => {
 
     const action = button.getAttribute('data-action');
     const content = button.getAttribute('data-content');
+    const title = button.getAttribute('data-title');
 
     if (action === 'copy') {
         try {
@@ -565,7 +591,6 @@ chatHistoryEl.addEventListener('click', async (event) => {
     }
 
     if (action === 'download') {
-        const title = button.getAttribute('data-title');
         const filename = `${title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.md`;
         const blob = new Blob([content], { type: 'text/markdown;charset=utf-8;' });
         const link = document.createElement('a');
@@ -578,6 +603,11 @@ chatHistoryEl.addEventListener('click', async (event) => {
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
+    }
+
+    if (action === 'save-gdoc') {
+        const url = `https://docs.google.com/document/create?title=${encodeURIComponent(title)}&body=${encodeURIComponent(content)}`;
+        window.open(url, '_blank');
     }
 });
 
@@ -606,5 +636,6 @@ function getInitialJournalContext() {
 }
 
 journalContextEl.value = getInitialJournalContext();
-addMessage('agent', 'Welcome to Narrative Sculptor. Please enter an initial thought or idea below to begin the refinement process.', 'Welcome to Narrative Sculptor.');
+apiKeyGateEl.classList.remove('hidden');
+mainContainerEl.classList.add('blurred');
 updateUI();
